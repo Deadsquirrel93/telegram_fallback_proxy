@@ -1,13 +1,25 @@
-FROM golang:1.21-alpine
+FROM golang:1.21-alpine AS builder
 
 WORKDIR /app
 
-COPY . .
-
+COPY go.mod go.sum ./
 RUN go mod download
 
-RUN go build -o main .
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o telegram-proxy .
+
+FROM alpine:latest  
+
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /root/
+
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+USER appuser
+
+COPY --from=builder /app/telegram-proxy .
 
 EXPOSE 8080
 
-CMD ["./main"]
+CMD ["./telegram-proxy"]

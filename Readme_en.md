@@ -15,23 +15,28 @@ Receives HTTP requests and forwards texts to the specified `chat_id`.
 - ⏱️ **Built-in HTTP server timeouts**, protecting against DDoS (Slowloris attacks).
 - 🛡️ **Memory protection** with proper limits on incoming JSON payload sizes (up to 1 MB).
 - 🔄 **Re-utilised HTTP client** with timeouts for outgoing Telegram API calls, preventing goroutine leaks.
-- ⚙️ **Flexible configuration**: bot endpoint and access tokens are easily configurable via environment variables.
+- ❤️ **Protected healthcheck** that always requires `X-Access-Token`.
+- ⚙️ **Flexible configuration**: port, endpoints, and access tokens are easily configurable via environment variables.
 
 ---
 
 ## ⚙️ Environment Variables
 
-Create an `.env` file with the following setup:
+The service can load configuration from `.env` or from system environment variables. Only `TELEGRAM_TOKEN` and `ACCESS_TOKEN` are strictly required.
 
 ```env
 TELEGRAM_TOKEN=your_telegram_bot_token
 ACCESS_TOKEN=your_api_access_token
+PORT=8080
 PROXY_ENDPOINT=/service/proxy/telegram
+HEALTHCHECK_ENDPOINT=/healthz
 ```
 
 - `TELEGRAM_TOKEN` — your Telegram bot token (from BotFather).
 - `ACCESS_TOKEN` — an API access token acting as a secret password (passed in request headers).
+- `PORT` — the HTTP server port inside the container/process, defaults to `8080`.
 - `PROXY_ENDPOINT` — custom routing URI, defaults to `/service/proxy/telegram`.
+- `HEALTHCHECK_ENDPOINT` — healthcheck URI, defaults to `/healthz`.
 
 ---
 
@@ -46,12 +51,33 @@ docker build -t telegram-proxy .
 ### 2. Run the container
 
 ```bash
-docker run -p 8080:8080 --env-file .env -d telegram-proxy
+docker run -d \
+  --name telegram-proxy \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  --env-file .env \
+  telegram-proxy
+```
+
+`--restart unless-stopped` makes Docker restart the container automatically after a crash or after the Docker daemon restarts.
+
+If you change `PORT`, expose the same port on both sides:
+
+```bash
+docker run -d \
+  --name telegram-proxy \
+  --restart unless-stopped \
+  -p 9090:9090 \
+  --env-file .env \
+  -e PORT=9090 \
+  telegram-proxy
 ```
 
 ---
 
 ## 🔗 Usage
+
+### Send a message
 
 ```bash
 curl -X POST http://localhost:8080/service/proxy/telegram \
@@ -69,12 +95,40 @@ curl -X POST http://localhost:8080/service/proxy/telegram \
 
 ---
 
+## ❤️ Healthcheck
+
+The healthcheck does not call Telegram API. It only confirms that the service is running and accepts authenticated requests. Access is always protected by the same `X-Access-Token`.
+
+```bash
+curl -X GET http://localhost:8080/healthz \
+  -H "X-Access-Token: your_api_access_token"
+```
+
+Response:
+
+```json
+{"status":"ok"}
+```
+
+If you override `PORT` or `HEALTHCHECK_ENDPOINT`, use those values in the URL.
+
+---
+
 ## ✅ API Responses
 
-- `204 No content` — message was sent successfully
-- `401 Unauthorized` — `X-Access-Token` was missing or invalid
-- `400 Bad Request` — missing `chat_id` or `message`
-- `500 Internal Server Error` — error interacting with Telegram API
+### Proxy endpoint
+
+- `204 No Content` — message was sent successfully.
+- `400 Bad Request` — missing `chat_id` or `message`, or invalid JSON body.
+- `401 Unauthorized` — missing or invalid `X-Access-Token`.
+- `405 Method Not Allowed` — method is not `POST`.
+- `500 Internal Server Error` — Telegram API request failed.
+
+### Healthcheck
+
+- `200 OK` — service is reachable and the token is valid.
+- `401 Unauthorized` — missing or invalid `X-Access-Token`.
+- `405 Method Not Allowed` — method is not `GET`.
 
 ---
 
@@ -83,11 +137,14 @@ curl -X POST http://localhost:8080/service/proxy/telegram \
 ```env
 TELEGRAM_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
 ACCESS_TOKEN=my-secret-token
+PORT=8080
 PROXY_ENDPOINT=/my/custom/endpoint
+HEALTHCHECK_ENDPOINT=/internal/healthz
 ```
 
 ---
 
 ## 🛡️ Security Advice
 
-- If you map ports directly to a public subnet, considering limiting API access via IP whitelisting.
+- All working endpoints, including `healthcheck`, require a valid `X-Access-Token`.
+- If you expose the service to a public subnet, consider adding IP whitelisting as an extra layer.

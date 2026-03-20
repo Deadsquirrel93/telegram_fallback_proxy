@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -34,6 +35,28 @@ var (
 		Timeout: 10 * time.Second,
 	}
 )
+
+const (
+	defaultProxyEndpoint       = "/service/proxy/telegram"
+	defaultHealthcheckEndpoint = "/healthz"
+	defaultPort                = "8080"
+)
+
+func normalizeListenAddr(port string) string {
+	port = strings.TrimSpace(port)
+	if port == "" {
+		port = defaultPort
+	}
+	if !strings.HasPrefix(port, ":") {
+		port = ":" + port
+	}
+
+	return port
+}
+
+func authorizeRequest(r *http.Request, accessToken string) bool {
+	return r.Header.Get("X-Access-Token") == accessToken
+}
 
 // sendMessage sends a standard text message to the specified Telegram chat.
 // It uses the provided bot token, encodes the data using JSON, and returns an error
@@ -84,12 +107,17 @@ func main() {
 	botToken := os.Getenv("TELEGRAM_TOKEN")
 	accessToken := os.Getenv("ACCESS_TOKEN")
 	proxyEndpoint := os.Getenv("PROXY_ENDPOINT")
+	healthcheckEndpoint := os.Getenv("HEALTHCHECK_ENDPOINT")
+	listenAddr := normalizeListenAddr(os.Getenv("PORT"))
 
 	if botToken == "" || accessToken == "" {
 		log.Fatal("Error: TELEGRAM_TOKEN and ACCESS_TOKEN must be provided.")
 	}
 	if proxyEndpoint == "" {
-		proxyEndpoint = "/service/proxy/telegram"
+		proxyEndpoint = defaultProxyEndpoint
+	}
+	if healthcheckEndpoint == "" {
+		healthcheckEndpoint = defaultHealthcheckEndpoint
 	}
 
 	// Define handler for HTTP POST mapping
@@ -99,8 +127,7 @@ func main() {
 			return
 		}
 
-		clientToken := r.Header.Get("X-Access-Token")
-		if clientToken != accessToken {
+		if !authorizeRequest(r, accessToken) {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -128,21 +155,40 @@ func main() {
 		w.WriteHeader(http.StatusNoContent)
 	}
 
+	healthcheckHandler := func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if !authorizeRequest(r, accessToken) {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+			log.Printf("Failed to write healthcheck response: %v", err)
+		}
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc(proxyEndpoint, proxyHandler)
+	mux.HandleFunc(healthcheckEndpoint, healthcheckHandler)
 
 	// Use custom http.Server instead of http.ListenAndServe
 	// This ensures Read and Write timeouts are set to prevent DDoS (Slowloris attacks)
 	// and dangling goroutines.
 	server := &http.Server{
-		Addr:         ":8080",
+		Addr:         listenAddr,
 		Handler:      mux,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 
-	log.Println("Starting Telegram proxy server on port :8080")
+	log.Printf("Starting Telegram proxy server on %s", listenAddr)
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatal("Server shutdown ungracefully:", err)
 	}

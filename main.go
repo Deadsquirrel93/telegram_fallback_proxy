@@ -4,13 +4,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -37,9 +41,10 @@ var (
 )
 
 const (
-	defaultProxyEndpoint       = "/service/proxy/telegram"
-	defaultHealthcheckEndpoint = "/healthz"
-	defaultPort                = "8080"
+	defaultProxyEndpoint            = "/service/proxy/telegram"
+	defaultHealthcheckEndpoint      = "/healthz"
+	defaultPort                     = "8080"
+	defaultShutdownTimeoutSeconds   = 15
 )
 
 func normalizeListenAddr(port string) string {
@@ -188,8 +193,40 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	log.Printf("Starting Telegram proxy server on %s", listenAddr)
-	if err := server.ListenAndServe(); err != nil {
-		log.Fatal("Server shutdown ungracefully:", err)
+	shutdownTimeout := defaultShutdownTimeoutSeconds
+	if v := os.Getenv("SHUTDOWN_TIMEOUT"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			shutdownTimeout = parsed
+		} else {
+			log.Printf("Warning: invalid SHUTDOWN_TIMEOUT value %q, using default %ds", v, defaultShutdownTimeoutSeconds)
+		}
 	}
+
+	// Run server in a separate goroutine so main can block on OS signal.
+	serverErr := make(chan error, 1)
+	go func() {
+		log.Printf("Starting Telegram proxy server on %s", listenAddr)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serverErr <- err
+		}
+	}()
+
+	// Block until SIGINT or SIGTERM is received, or the server fails to start.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case err := <-serverErr:
+		log.Fatal("Server failed to start:", err)
+	case sig := <-quit:
+		log.Printf("Received signal %s, shutting down gracefully (timeout: %ds)...", sig, shutdownTimeout)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(shutdownTimeout)*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+		log.Fatal("Server forced to shutdown:", err)
+	}
+	log.Println("Server stopped.")
 }

@@ -15,6 +15,7 @@
 - ⏱️ **Встроенные таймауты HTTP-сервера**, обеспечивающие защиту от DDoS (Slowloris attacks).
 - 🛡️ **Защита по памяти** с ограничением размера входящего JSON-запроса (до 1 MB).
 - 🔄 **Переиспользование HTTP-клиента** с таймаутами для внешних вызовов к Telegram API, предотвращающее утечки горутин.
+- 🛑 **Graceful shutdown**: при получении `SIGTERM`/`SIGINT` сервер дожидается завершения активных запросов перед остановкой.
 - ❤️ **Защищённый healthcheck** с обязательной авторизацией по `X-Access-Token`.
 - ⚙️ **Гибкая конфигурация**: порт, эндпоинты и доступы легко настраиваются через переменные окружения.
 
@@ -30,6 +31,7 @@ ACCESS_TOKEN=your_api_access_token
 PORT=8080
 PROXY_ENDPOINT=/service/proxy/telegram
 HEALTHCHECK_ENDPOINT=/healthz
+SHUTDOWN_TIMEOUT=15
 ```
 
 - `TELEGRAM_TOKEN` — токен Telegram-бота.
@@ -37,6 +39,7 @@ HEALTHCHECK_ENDPOINT=/healthz
 - `PORT` — порт HTTP-сервера внутри контейнера/процесса, по умолчанию `8080`.
 - `PROXY_ENDPOINT` — эндпоинт (URI путь), по умолчанию используется `/service/proxy/telegram`.
 - `HEALTHCHECK_ENDPOINT` — эндпоинт проверки состояния, по умолчанию `/healthz`.
+- `SHUTDOWN_TIMEOUT` — максимальное время ожидания завершения активных запросов при остановке сервера (в секундах), по умолчанию `15`.
 
 ---
 
@@ -140,6 +143,7 @@ ACCESS_TOKEN=my-secret-token
 PORT=8080
 PROXY_ENDPOINT=/my/custom/endpoint
 HEALTHCHECK_ENDPOINT=/internal/healthz
+SHUTDOWN_TIMEOUT=15
 ```
 
 ---

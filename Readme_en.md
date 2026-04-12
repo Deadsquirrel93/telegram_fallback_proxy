@@ -15,6 +15,7 @@ Receives HTTP requests and forwards texts to the specified `chat_id`.
 - ⏱️ **Built-in HTTP server timeouts**, protecting against DDoS (Slowloris attacks).
 - 🛡️ **Memory protection** with proper limits on incoming JSON payload sizes (up to 1 MB).
 - 🔄 **Re-utilised HTTP client** with timeouts for outgoing Telegram API calls, preventing goroutine leaks.
+- 🛑 **Graceful shutdown**: on `SIGTERM`/`SIGINT` the server waits for in-flight requests to finish before stopping.
 - ❤️ **Protected healthcheck** that always requires `X-Access-Token`.
 - ⚙️ **Flexible configuration**: port, endpoints, and access tokens are easily configurable via environment variables.
 
@@ -30,6 +31,7 @@ ACCESS_TOKEN=your_api_access_token
 PORT=8080
 PROXY_ENDPOINT=/service/proxy/telegram
 HEALTHCHECK_ENDPOINT=/healthz
+SHUTDOWN_TIMEOUT=15
 ```
 
 - `TELEGRAM_TOKEN` — your Telegram bot token (from BotFather).
@@ -37,6 +39,7 @@ HEALTHCHECK_ENDPOINT=/healthz
 - `PORT` — the HTTP server port inside the container/process, defaults to `8080`.
 - `PROXY_ENDPOINT` — custom routing URI, defaults to `/service/proxy/telegram`.
 - `HEALTHCHECK_ENDPOINT` — healthcheck URI, defaults to `/healthz`.
+- `SHUTDOWN_TIMEOUT` — maximum time in seconds to wait for in-flight requests to finish on shutdown, defaults to `15`.
 
 ---
 
@@ -140,6 +143,7 @@ ACCESS_TOKEN=my-secret-token
 PORT=8080
 PROXY_ENDPOINT=/my/custom/endpoint
 HEALTHCHECK_ENDPOINT=/internal/healthz
+SHUTDOWN_TIMEOUT=15
 ```
 
 ---

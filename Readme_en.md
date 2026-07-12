@@ -100,20 +100,26 @@ curl -X POST http://localhost:8080/service/proxy/telegram \
 
 ## ❤️ Healthcheck
 
-The healthcheck does not call Telegram API. It only confirms that the service is running and accepts authenticated requests. Access is always protected by the same `X-Access-Token`.
+The healthcheck confirms that the service is running and additionally verifies that the Telegram Bot API is reachable by calling the `getMe` method (which also validates the bot token). Access is always protected by the same `X-Access-Token`.
 
 ```bash
 curl -X GET http://localhost:8080/healthz \
   -H "X-Access-Token: your_api_access_token"
 ```
 
-Response:
+When both the service and the Telegram API are available, it returns `200 OK`:
 
 ```json
-{"status":"ok"}
+{"status":"ok","telegram":"ok"}
 ```
 
-If you override `PORT` or `HEALTHCHECK_ENDPOINT`, use those values in the URL.
+When the Telegram API is unreachable or the token is invalid, it returns `503 Service Unavailable`:
+
+```json
+{"status":"degraded","telegram":"unavailable"}
+```
+
+The Telegram check is bounded by a 5-second timeout so the healthcheck never hangs. If you override `PORT` or `HEALTHCHECK_ENDPOINT`, use those values in the URL.
 
 ---
 

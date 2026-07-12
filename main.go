@@ -101,6 +101,34 @@ func sendMessage(token, chatID, message string) error {
 	return nil
 }
 
+// checkTelegram verifies that the Telegram Bot API is reachable and the bot
+// token is valid by calling the lightweight getMe method. It returns an error
+// wrapped with context if the API is unreachable or responds with a non-OK status.
+// The provided context bounds the request duration so the healthcheck never
+// hangs longer than the caller allows.
+func checkTelegram(ctx context.Context, token string) error {
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/getMe", token)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create http request: %w", err)
+	}
+
+	resp, err := defaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("http request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		// Read a limited amount of data to avoid resource exhaustion in case of unexpectedly large error answers
+		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 10*1024))
+		return fmt.Errorf("telegram API error (status %d): %s", resp.StatusCode, string(responseBody))
+	}
+
+	return nil
+}
+
 func main() {
 	// We ignore the error from godotenv.Load().
 	// This is critical for Docker / CI environments where .env files do not exist,
@@ -171,9 +199,28 @@ func main() {
 			return
 		}
 
+		// Verify Telegram API reachability with a bounded timeout so the
+		// healthcheck never hangs longer than the server's WriteTimeout.
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		resp := map[string]string{
+			"status":   "ok",
+			"telegram": "ok",
+		}
+		statusCode := http.StatusOK
+
+		if err := checkTelegram(ctx, botToken); err != nil {
+			log.Printf("Healthcheck: Telegram API unavailable: %v", err)
+			resp["status"] = "degraded"
+			resp["telegram"] = "unavailable"
+			// Signal unhealthy state to orchestrators / monitors via status code.
+			statusCode = http.StatusServiceUnavailable
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+		w.WriteHeader(statusCode)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			log.Printf("Failed to write healthcheck response: %v", err)
 		}
 	}
